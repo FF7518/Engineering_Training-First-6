@@ -23,8 +23,8 @@ import sys
 import os
 import glob
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='End-to-end inference')
+def parse_args():#根据函数内容创建对象（参数配置说明）
+    parser = argparse.ArgumentParser(description='End-to-end inference')#在参数文档之前显示End-to-end inference
     parser.add_argument(
         '--cfg',
         dest='cfg',
@@ -47,14 +47,16 @@ def parse_args():
         type=str
     )
     parser.add_argument(
-        'im_or_folder', help='image or folder of images', default=None
+        'im_or_folder',
+        help='image or folder of images',
+        default=None
     )
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
     return parser.parse_args()
 
-def get_resolution(filename):
+def get_resolution(filename):#获取文件宽度和高度
     command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
                '-show_entries', 'stream=width,height', '-of', 'csv=p=0', filename]
     pipe = sp.Popen(command, stdout=sp.PIPE, bufsize=-1)
@@ -62,7 +64,7 @@ def get_resolution(filename):
         w, h = line.decode().strip().split(',')
         return int(w), int(h)
 
-def read_video(filename):
+def read_video(filename):#读取文件
     w, h = get_resolution(filename)
 
     command = ['ffmpeg',
@@ -77,34 +79,32 @@ def read_video(filename):
         data = pipe.stdout.read(w*h*3)
         if not data:
             break
-        yield np.frombuffer(data, dtype='uint8').reshape((h, w, 3))
+        yield np.frombuffer(data, dtype='uint8').reshape((h, w, 3))#数据重塑
 
 
 def main(args):
 
-    cfg = get_cfg()
-    cfg.merge_from_file(model_zoo.get_config_file(args.cfg))
+    cfg = get_cfg()#获取detectron2的默认配置
+    cfg.merge_from_file(model_zoo.get_config_file(args.cfg))#从文件加载值
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7
-    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(args.cfg)
-    predictor = DefaultPredictor(cfg)
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(args.cfg)#加载检测点
+    predictor = DefaultPredictor(cfg)#创建一个端到端检测器
     
-
-    if os.path.isdir(args.im_or_folder):
+    #路径操作
+    if os.path.isdir(args.im_or_folder):#读取路径
         im_list = glob.iglob(args.im_or_folder + '/*.' + args.image_ext)
     else:
         im_list = [args.im_or_folder]
 
     for video_name in im_list:
-        out_name = os.path.join(
-                args.output_dir, os.path.basename(video_name)
-            )
+        out_name = os.path.join(args.output_dir, os.path.basename(video_name))#输出路径
         print('Processing {}'.format(video_name))
 
         boxes = []
         segments = []
         keypoints = []
-
-        for frame_i, im in enumerate(read_video(video_name)):
+        #提取每一帧的骨骼
+        for frame_i, im in enumerate(read_video(video_name)):#frame_i为下标，im为数据
             t = time.time()
             outputs = predictor(im)['instances'].to('cpu')
             
@@ -117,7 +117,7 @@ def main(args):
                     has_bbox = True
                     scores = outputs.scores.numpy()[:, None]
                     bbox_tensor = np.concatenate((bbox_tensor, scores), axis=1)
-            if has_bbox:
+            if has_bbox:#数据格式化
                 kps = outputs.pred_keypoints.numpy()
                 kps_xy = kps[:, :, :2]
                 kps_prob = kps[:, :, 2:3]
@@ -128,7 +128,7 @@ def main(args):
                 kps = []
                 bbox_tensor = []
                 
-            # Mimic Detectron1 format
+            #模拟成detectron1的格式
             cls_boxes = [[], bbox_tensor]
             cls_keyps = [[], kps]
             
@@ -137,15 +137,16 @@ def main(args):
             keypoints.append(cls_keyps)
 
         
-        # Video resolution
+        #输出视频的分辨率
         metadata = {
             'w': im.shape[1],
             'h': im.shape[0],
         }
         
+        #保存为.npz文件
         np.savez_compressed(out_name, boxes=boxes, segments=segments, keypoints=keypoints, metadata=metadata)
 
-
+#当前模块仅作为脚本执行
 if __name__ == '__main__':
     setup_logger()
     args = parse_args()
